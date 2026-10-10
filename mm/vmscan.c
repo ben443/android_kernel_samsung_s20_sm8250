@@ -2535,15 +2535,21 @@ static inline bool mem_boost_pgdat_wmark(struct pglist_data *pgdat)
 }
 
 #define MEM_BOOST_THRESHOLD ((600 * 1024 * 1024) / (PAGE_SIZE))
-inline bool need_memory_boosting(struct pglist_data *pgdat)
+bool need_memory_boosting(struct pglist_data *pgdat)
 {
 	bool ret;
-	unsigned long pgdatfile = node_page_state(pgdat, NR_ACTIVE_FILE) +
-				node_page_state(pgdat, NR_INACTIVE_FILE);
+	unsigned long pgdatfile;
 
-	if (time_after(jiffies, last_mode_change + MEM_BOOST_MAX_TIME) ||
-			pgdatfile < MEM_BOOST_THRESHOLD)
+	if (time_after(jiffies, last_mode_change + MEM_BOOST_MAX_TIME))
 		mem_boost_mode = NO_BOOST;
+
+	/* NULL queries the boost mode without applying per-node limits. */
+	if (pgdat) {
+		pgdatfile = node_page_state(pgdat, NR_ACTIVE_FILE) +
+				node_page_state(pgdat, NR_INACTIVE_FILE);
+		if (pgdatfile < MEM_BOOST_THRESHOLD)
+			mem_boost_mode = NO_BOOST;
+	}
 
 	switch (mem_boost_mode) {
 	case BOOST_KILL:
@@ -2551,7 +2557,7 @@ inline bool need_memory_boosting(struct pglist_data *pgdat)
 		ret = true;
 		break;
 	case BOOST_MID:
-		ret = mem_boost_pgdat_wmark(pgdat) ? false : true;
+		ret = !pgdat || !mem_boost_pgdat_wmark(pgdat);
 		break;
 	case NO_BOOST:
 	default:

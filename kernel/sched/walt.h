@@ -365,7 +365,10 @@ static inline unsigned int walt_nr_rtg_high_prio(int cpu)
 
 extern bool is_rtgb_active(void);
 extern u64 get_rtgb_active_time(void);
-#define SCHED_PRINT(arg)        printk_deferred("%s=%llu", #arg, arg)
+#define SCHED_PRINT(arg) \
+	printk_deferred("%s=%llu", #arg, (unsigned long long)(arg))
+#define SCHED_PRINT_SIGNED(arg) \
+	printk_deferred("%s=%lld", #arg, (long long)(arg))
 #define STRG(arg)               #arg
 
 static inline void walt_task_dump(struct task_struct *p)
@@ -374,7 +377,7 @@ static inline void walt_task_dump(struct task_struct *p)
 	int i, j = 0;
 	int buffsz = NR_CPUS * 16;
 
-	SCHED_PRINT(p->pid);
+	SCHED_PRINT_SIGNED(p->pid);
 	SCHED_PRINT(p->ravg.mark_start);
 	SCHED_PRINT(p->ravg.demand);
 	SCHED_PRINT(p->ravg.coloc_demand);
@@ -384,13 +387,13 @@ static inline void walt_task_dump(struct task_struct *p)
 	for (i = 0 ; i < nr_cpu_ids; i++)
 		j += scnprintf(buff + j, buffsz - j, "%u ",
 				p->ravg.curr_window_cpu[i]);
-	printk_deferred("%s=%d (%s)\n", STRG(p->ravg.curr_window),
+	printk_deferred("%s=%u (%s)\n", STRG(p->ravg.curr_window),
 			p->ravg.curr_window, buff);
 
 	for (i = 0, j = 0 ; i < nr_cpu_ids; i++)
 		j += scnprintf(buff + j, buffsz - j, "%u ",
 				p->ravg.prev_window_cpu[i]);
-	printk_deferred("%s=%d (%s)\n", STRG(p->ravg.prev_window),
+	printk_deferred("%s=%u (%s)\n", STRG(p->ravg.prev_window),
 			p->ravg.prev_window, buff);
 
 	SCHED_PRINT(p->last_wake_ts);
@@ -450,7 +453,7 @@ static inline void walt_dump(void)
 
 	printk_deferred("============ WALT RQ DUMP START ==============\n");
 	printk_deferred("Sched ktime_get: %llu\n", sched_ktime_clock());
-	printk_deferred("Time last window changed=%lu\n",
+	printk_deferred("Time last window changed=%llu\n",
 			sched_ravg_window_change_time);
 	for_each_online_cpu(cpu) {
 		walt_rq_dump(cpu);
@@ -461,7 +464,7 @@ static inline void walt_dump(void)
 	printk_deferred("============ WALT RQ DUMP END ==============\n");
 }
 
-static int in_sched_bug;
+static int in_sched_bug __maybe_unused;
 #define SCHED_BUG_ON(condition)				\
 ({							\
 	if (unlikely(!!(condition)) && !in_sched_bug) {	\
