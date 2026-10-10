@@ -1,35 +1,95 @@
-name: Build Kernel
+name: Build Kernel and Boot Image
 
 on:
+  push:
+  pull_request:
   workflow_dispatch:
 
 jobs:
   build:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    env:
+      ARCH: arm64
+      CROSS_COMPILE: aarch64-linux-gnu-
+      KERNEL_OUT: out
+      KERNEL_DEFCONFIG: vendor/kona-sec-perf_defconfig
 
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v2
+      - name: Checkout code
+        uses: actions/checkout@v4
 
-    - name: Set up JDK 1.8
-      uses: actions/setup-java@v2
-      with:
-        java-version: '1.8'
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            bc bison build-essential cpio flex gcc-aarch64-linux-gnu \
+            libelf-dev libncurses5-dev libssl-dev make mkbootimg
 
-    - name: Install dependencies
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y build-essential libncurses5-dev bc bison flex libssl-dev
+      - name: Build kernel image and DTBs
+        run: |
+          mkdir -p "${KERNEL_OUT}"
+          make O="${KERNEL_OUT}" ARCH="${ARCH}" CROSS_COMPILE="${CROSS_COMPILE}" "${KERNEL_DEFCONFIG}"
+          make -j"$(nproc)" O="${KERNEL_OUT}" ARCH="${ARCH}" CROSS_COMPILE="${CROSS_COMPILE}" Image.gz dtbs
 
-    - name: Build kernel
-      run: |
-        make clean
-        make mrproper
-        make ARCH=arm64 vendor/samsung/r8q.config
-        make -j$(nproc) ARCH=arm64 all
+      - name: Prepare boot inputs
+        run: |
+          set -euo pipefail
+          KERNEL_IMAGE="${GITHUB_WORKSPACE}/${KERNEL_OUT}/arch/${ARCH}/boot/Image.gz"
+          if [ ! -f "${KERNEL_IMAGE}" ]; then
+            echo "Kernel image not found: ${KERNEL_IMAGE}" >&2
+            exit 1
+          fi
 
-    - name: Upload kernel
-      uses: actions/upload-artifact@v3
-      with:
-        name: built-kernel
-        path: /
+          DTB_SOURCE="$(find "${GITHUB_WORKSPACE}/${KERNEL_OUT}/arch/${ARCH}/boot/dts" -type f -name '*.dtb' | sort | head -n 1)"
+          if [ -z "${DTB_SOURCE}" ]; then
+            echo "No DTB found in build output" >&2
+            exit 1
+          fi
+          cp "${DTB_SOURCE}" "${GITHUB_WORKSPACE}/dtb"
+
+          if [ -f "${GITHUB_WORKSPACE}/ramdisk" ]; then
+            :
+          elif [ -f "${GITHUB_WORKSPACE}/ramdisk.img" ]; then
+            :
+          elif [ -f "${GITHUB_WORKSPACE}/ramdisk.cpio.gz" ]; then
+            :
+          else
+            tmpdir="$(mktemp -d)"
+            (
+              cd "${tmpdir}"
+              find . | cpio -o -H newc --quiet | gzip -9
+            ) > "${GITHUB_WORKSPACE}/ramdisk.cpio.gz"
+            rm -rf "${tmpdir}"
+          fi
+
+      - name: Build boot.img
+        run: |
+          chmod +x "${GITHUB_WORKSPACE}/build_boot_img.sh"
+          "${GITHUB_WORKSPACE}/build_boot_img.sh" \
+            --kernel "${GITHUB_WORKSPACE}/${KERNEL_OUT}/arch/${ARCH}/boot/Image.gz" \
+            --dtb "${GITHUB_WORKSPACE}/dtb" \
+            --out "${GITHUB_WORKSPACE}/boot.img"
+
+      - name: Upload kernel artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: kernel-artifacts
+          path: |
+            ${{ github.workspace }}/out/arch/arm64/boot/Image.gz
+            ${{ github.workspace }}/out/arch/arm64/boot/dts/**/*.dtb
+          if-no-files-found: error
+
+      - name: Upload boot artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: boot-artifacts
+          path: |
+            ${{ github.workspace }}/boot.img
+            ${{ github.workspace }}/dtb
+            ${{ github.workspace }}/ramdisk
+            ${{ github.workspace }}/ramdisk.img
+            ${{ github.workspace }}/ramdisk.cpio.gz
+          if-no-files-found: error
